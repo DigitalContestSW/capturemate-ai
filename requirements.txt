@@ -1,3 +1,8 @@
 fastapi==0.139.0
 uvicorn[standard]==0.34.0
 pydantic==2.13.4
+# .env 파일을 환경변수로 로드 (config.py에서 사용)
+python-dotenv
+# Gemini 테스트 클라이언트. LLM_API_KEY가 설정됐을 때만 import된다.
+# `pip install google-genai`로 설치된 실제 버전을 확인해 고정(pin)할 것.
+google-genai

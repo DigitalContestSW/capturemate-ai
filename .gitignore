@@ -6,3 +6,4 @@ __pycache__/
 *.pyc
 ocr_output.txt
 ocr_samples
+ocr_samples_2

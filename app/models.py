@@ -16,3 +16,27 @@ class AnalyzeResponse(BaseModel):
     category: str
     recommendedAction: Optional[str] = None
     reminderAt: Optional[int] = None
+    # 2단계(카테고리별 추출) 결과를 담는 자리. 카테고리마다 필드가 다르므로 일단
+    # 유연한 dict로 둔다. 팀에서 카테고리별 필드가 확정되면 명시적 타입으로 승격.
+    # (안드로이드 Json은 ignoreUnknownKeys=true라 이 필드가 늘어도 디코딩이 안 깨진다.)
+    details: Optional[dict] = None
+
+
+class AnalyzeBatchItem(BaseModel):
+    clientId: str                       # 응답을 로컬 캡처에 다시 매핑하기 위한 식별자
+    maskedText: str = Field(min_length=1)
+    capturedAt: Optional[int] = None    # 캡처 시각(epoch ms) — 시간 근접 그룹핑에 사용
+
+
+class AnalyzeBatchRequest(BaseModel):
+    items: list[AnalyzeBatchItem]
+    locale: str = "ko-KR"
+
+
+class MemoGroup(BaseModel):
+    memberClientIds: list[str]          # 이 메모로 묶인 스크린샷들의 clientId
+    analysis: AnalyzeResponse           # 그룹 대표 분석 결과(그룹당 메모 1개)
+
+
+class AnalyzeBatchResponse(BaseModel):
+    groups: list[MemoGroup]

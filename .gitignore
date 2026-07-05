@@ -4,3 +4,6 @@ __pycache__/
 .env
 .pytest_cache/
 *.pyc
+ocr_output.txt
+ocr_samples
+ocr_samples_2

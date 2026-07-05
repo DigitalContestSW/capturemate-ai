@@ -14,6 +14,7 @@ from app.analysis.prompt import (
     build_classify_prompt,
 )
 from app.config import Settings, settings
+from app.integrations.kakao_local import KakaoLocalClient, enrich_restaurant_details_with_kakao
 from app.llm.base import LlmClient, LlmError
 from app.llm.factory import build_llm_client
 from app.models import AnalyzeResponse
@@ -76,12 +77,23 @@ class AnalysisService:
         if data is None:
             return None
         try:
-            return stage2.details_model.model_validate(data).model_dump()
+            details = stage2.details_model.model_validate(data).model_dump()
         except ValidationError:
             logger.warning("stage-2 details validation failed for category=%s", base.category)
             return None
+        return self._enrich_details(base.category, details)
 
     # ── 공통: JSON 응답 생성(재시도 포함) ───────────────────────────────────
+    def _enrich_details(self, category: str, details: dict) -> dict:
+        if category != "restaurant" or not self._config.kakao_rest_api_key:
+            return details
+
+        client = KakaoLocalClient(
+            rest_api_key=self._config.kakao_rest_api_key,
+            timeout_seconds=self._config.kakao_timeout_seconds,
+        )
+        return enrich_restaurant_details_with_kakao(details, client)
+
     def _generate_json(self, prompt: str) -> dict | None:
         assert self._client is not None
         attempts = self._config.llm_max_retries + 1

@@ -22,6 +22,26 @@ class AnalyzeResponse(BaseModel):
     details: Optional[dict] = None
 
 
+class AnalyzeBatchItem(BaseModel):
+    clientId: str                       # 응답을 로컬 캡처에 다시 매핑하기 위한 식별자
+    maskedText: str = Field(min_length=1)
+    capturedAt: Optional[int] = None    # 캡처 시각(epoch ms) — 시간 근접 그룹핑에 사용
+
+
+class AnalyzeBatchRequest(BaseModel):
+    items: list[AnalyzeBatchItem]
+    locale: str = "ko-KR"
+
+
+class MemoGroup(BaseModel):
+    memberClientIds: list[str]          # 이 메모로 묶인 스크린샷들의 clientId
+    analysis: AnalyzeResponse           # 그룹 대표 분석 결과(그룹당 메모 1개)
+
+
+class AnalyzeBatchResponse(BaseModel):
+    groups: list[MemoGroup]
+
+
 class AnalyzeImageResponse(BaseModel):
     """백엔드 OCR 테스트용 응답.
 

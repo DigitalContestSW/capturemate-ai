@@ -129,12 +129,21 @@ def _parse_json(raw: str) -> dict:
 def _to_response(base: LlmAnalysis, details: dict | None) -> AnalyzeResponse:
     # category는 허용 목록(화이트리스트)으로 강제 — LLM이 엉뚱한 값을 줘도 안전.
     category = base.category if base.category in ALLOWED_CATEGORIES else UNKNOWN_CATEGORY
+
+    # 추천 액션: 2단계(카테고리 맞춤)가 있으면 그것을 우선, 없으면 1단계 기본값.
+    # details 안에 중복 저장하지 않도록 꺼내서 최상위 필드로만 노출한다.
+    recommended = base.recommendedAction
+    if details is not None:
+        stage2_action = details.pop("recommendedAction", None)
+        if stage2_action:
+            recommended = stage2_action
+
     return AnalyzeResponse(
         serverMemoId=None,
         title=(base.title[:40] or "New capture"),
         summary=(base.summary or "No content to summarize."),
         category=category,
-        recommendedAction=base.recommendedAction,
+        recommendedAction=recommended,
         reminderAt=_iso_to_epoch_ms(base.reminderAtIso),
         details=details,
     )

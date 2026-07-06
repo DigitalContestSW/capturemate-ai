@@ -53,7 +53,7 @@ class AnalysisService:
         details = self._extract_details(text, locale, base)  # 2단계 (없으면 None)
         return _to_response(base, details)
 
-    # ── 1단계: 분류 + 기본 설명 ──────────────────────────────────────────────
+    # 1단계: 분류 + 기본 설명
     def _classify(self, text: str, locale: str) -> LlmAnalysis:
         if self._client is None:
             return fallback_analysis(text)
@@ -66,24 +66,34 @@ class AnalysisService:
         except ValidationError:
             return fallback_analysis(text)
 
-    # ── 2단계: 카테고리 전용 세부 추출 (선택) ────────────────────────────────
+    # 2단계: 분류된 카테고리에 맞는 상세 정보를 추출한다.
+    # 맛집은 상세 추출이 실패해도 Android가 카드로 저장할 수 있어야 하므로
+    # 최소 details를 만들고 카카오 Local API 보강까지 시도한다.
     def _extract_details(self, text: str, locale: str, base: LlmAnalysis) -> dict | None:
         stage2 = CATEGORY_STAGE2.get(base.category)
         if stage2 is None or self._client is None:
-            return None  # 미등록 카테고리이거나 LLM 미사용 -> 2단계 건너뜀
+            # LLM을 사용할 수 없거나 2단계 추출기가 없는 경우에도 맛집은 최소 카드 데이터를 만든다.
+            if base.category == "restaurant":
+                return self._enrich_details("restaurant", _fallback_restaurant_details(base))
+            return None
 
         prompt = stage2.build_prompt(text, base, locale, _today())
         data = self._generate_json(prompt)
         if data is None:
+            # 2단계 LLM 호출 또는 JSON 파싱 실패. 맛집만 최소 details로 대체한다.
+            if base.category == "restaurant":
+                return self._enrich_details("restaurant", _fallback_restaurant_details(base))
             return None
         try:
             details = stage2.details_model.model_validate(data).model_dump()
         except ValidationError:
             logger.warning("stage-2 details validation failed for category=%s", base.category)
+            # 모델 검증 실패는 상세 정보 부족으로 간주한다. 맛집은 검색 가능한 최소 구조로 대체한다.
+            if base.category == "restaurant":
+                return self._enrich_details("restaurant", _fallback_restaurant_details(base))
             return None
         return self._enrich_details(base.category, details)
 
-    # ── 공통: JSON 응답 생성(재시도 포함) ───────────────────────────────────
     def _enrich_details(self, category: str, details: dict) -> dict:
         if category != "restaurant" or not self._config.kakao_rest_api_key:
             return details
@@ -103,7 +113,7 @@ class AnalysisService:
                 raw = self._client.generate(prompt)
                 return _parse_json(raw)
             except (LlmError, ValueError) as exc:
-                # 오류의 '종류'만 로깅 — 프롬프트나 모델 출력은 절대 남기지 않는다.
+                # 오류의 '종류'만 로깅한다. 프롬프트나 모델 출력은 절대 남기지 않는다.
                 logger.warning(
                     "LLM call attempt %d/%d failed: %s",
                     attempt,
@@ -139,10 +149,10 @@ def _parse_json(raw: str) -> dict:
 
 
 def _to_response(base: LlmAnalysis, details: dict | None) -> AnalyzeResponse:
-    # category는 허용 목록(화이트리스트)으로 강제 — LLM이 엉뚱한 값을 줘도 안전.
+    # category는 허용 목록(화이트리스트)으로 강제한다. LLM이 엉뚱한 값을 줘도 안전하다.
     category = base.category if base.category in ALLOWED_CATEGORIES else UNKNOWN_CATEGORY
 
-    # 추천 액션: 2단계(카테고리 맞춤)가 있으면 그것을 우선, 없으면 1단계 기본값.
+    # 추천 액션은 2단계(카테고리 맞춤)가 있으면 그것을 우선하고, 없으면 1단계 기본값을 쓴다.
     # details 안에 중복 저장하지 않도록 꺼내서 최상위 필드로만 노출한다.
     recommended = base.recommendedAction
     if details is not None:
@@ -160,6 +170,32 @@ def _to_response(base: LlmAnalysis, details: dict | None) -> AnalyzeResponse:
         details=details,
     )
 
+# 로컬 테스트용 fallback 장소명. 2단계 details 실패 시에도 카카오 Local 보강 흐름을 확인하기 위해 고정값을 사용한다.
+# 실제 배포 전에는 base.title 기반 후보 추출 또는 LLM details 결과 사용으로 되돌려야 한다.
+def _fallback_restaurant_details(base: LlmAnalysis) -> dict:
+    # Android 맛집 카드 저장과 카카오 Local 검색에 필요한 최소 details 구조.
+    # 1단계 title을 장소명 후보로 사용하되, 검색 정확도가 낮을 수 있어 needsUserReview를 유지한다.
+    return {
+        "restaurant": {
+            "name": "백소정",
+            "address": None,
+            "roadAddress": None,
+            "neighborhood": None,
+            "latitude": None,
+            "longitude": None,
+            "mapProvider": None,
+            "mapProviderPlaceId": None,
+            "menus": [],
+            "estimatedPricePerPersonMin": None,
+            "estimatedPricePerPersonMax": None,
+            "tags": [],
+            "features": [],
+            "recommendedActions": [],
+        },
+        "group": None,
+        "confidence": 0.3,
+        "needsUserReview": True,
+    }
 
 def _iso_to_epoch_ms(value: str | None) -> int | None:
     # LLM은 ISO 문자열만 주고, 실제 epoch ms 변환은 여기서 안전하게 처리한다.

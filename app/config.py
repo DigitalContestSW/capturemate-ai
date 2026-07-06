@@ -22,15 +22,12 @@ class Settings:
     llm_api_key: str | None
     llm_timeout_seconds: float
     llm_max_retries: int
-<<<<<<< Updated upstream
     # 그룹핑(유사 스크린샷 묶기) 파라미터
     grouping_threshold: float      # 최종 임계값 (cosine × timeWeight ≥ 이 값이면 같은 그룹)
     grouping_tau_seconds: float    # 시간 가중치 감쇠 특성 시간(초). 클수록 시간 영향 약화
     grouping_w_min: float          # 시간 가중치 하한(0~1). 0이면 완전 감쇠 허용
-=======
     kakao_rest_api_key: str | None
     kakao_timeout_seconds: float
->>>>>>> Stashed changes
 
 
 def load_settings() -> Settings:
@@ -45,14 +42,11 @@ def load_settings() -> Settings:
         llm_api_key=os.getenv("LLM_API_KEY"),
         llm_timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "20")),
         llm_max_retries=int(os.getenv("LLM_MAX_RETRIES", "2")),
-<<<<<<< Updated upstream
         grouping_threshold=float(os.getenv("GROUPING_THRESHOLD", "0.7")),
         grouping_tau_seconds=float(os.getenv("GROUPING_TAU_SECONDS", "300")),
         grouping_w_min=float(os.getenv("GROUPING_W_MIN", "0.0")),
-=======
         kakao_rest_api_key=os.getenv("KAKAO_REST_API_KEY"),
         kakao_timeout_seconds=float(os.getenv("KAKAO_TIMEOUT_SECONDS", "3")),
->>>>>>> Stashed changes
     )
 
 

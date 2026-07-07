@@ -18,6 +18,7 @@ from app.integrations.kakao_local import KakaoLocalClient, enrich_restaurant_det
 from app.llm.base import LlmClient, LlmError
 from app.llm.factory import build_llm_client
 from app.models import AnalyzeResponse
+from app.privacy import restore_text
 
 logger = logging.getLogger("capturemate.analysis")
 
@@ -49,8 +50,9 @@ class AnalysisService:
         if not text:
             return _empty_response()
 
-        base = self._classify(text, locale)               # 1단계
-        details = self._extract_details(text, locale, base)  # 2단계 (없으면 None)
+        base = self._classify(text, locale)               # 1단계 (분류 + 유용성)
+        # 유용하지 않으면 2단계(세부 추출)를 건너뛴다 — 잡담/밈 등에 LLM 낭비 방지.
+        details = self._extract_details(text, locale, base) if base.isUseful else None
         return _to_response(base, details)
 
     # ── 1단계: 분류 + 기본 설명 ──────────────────────────────────────────────
@@ -155,10 +157,46 @@ def _to_response(base: LlmAnalysis, details: dict | None) -> AnalyzeResponse:
         title=(base.title[:40] or "New capture"),
         summary=(base.summary or "No content to summarize."),
         category=category,
+        isUseful=base.isUseful,
         recommendedAction=recommended,
         reminderAt=_iso_to_epoch_ms(base.reminderAtIso),
         details=details,
     )
+
+
+def restore_in_response(response: AnalyzeResponse, mapping: dict[str, str]) -> AnalyzeResponse:
+    """응답의 문자열 필드에 남은 placeholder를 원본으로 복원한다.
+
+    LLM이 문맥상 필요하다고 판단해 결과에 포함한 소프트 토큰([PHONE_1] 등)만
+    실제 값으로 되돌아간다. 하드 토큰([RRN]/[CARD])은 매핑에 없어 그대로 가려진다.
+    """
+    if not mapping:
+        return response
+
+    details = response.details
+    if details:
+        details = {key: _restore_value(value, mapping) for key, value in details.items()}
+
+    return response.model_copy(
+        update={
+            "title": restore_text(response.title, mapping),
+            "summary": restore_text(response.summary, mapping),
+            "recommendedAction": (
+                restore_text(response.recommendedAction, mapping)
+                if response.recommendedAction
+                else response.recommendedAction
+            ),
+            "details": details,
+        }
+    )
+
+
+def _restore_value(value, mapping: dict[str, str]):
+    if isinstance(value, str):
+        return restore_text(value, mapping)
+    if isinstance(value, list):
+        return [restore_text(v, mapping) if isinstance(v, str) else v for v in value]
+    return value
 
 
 def _iso_to_epoch_ms(value: str | None) -> int | None:
@@ -176,6 +214,7 @@ def _empty_response() -> AnalyzeResponse:
         title="New capture",
         summary="No content to summarize.",
         category=UNKNOWN_CATEGORY,
+        isUseful=False,  # 내용이 없으면 저장할 가치도 없음
         recommendedAction="메모로 저장",
         reminderAt=None,
         details=None,

@@ -14,6 +14,7 @@ class AnalyzeResponse(BaseModel):
     title: str
     summary: str
     category: str
+    isUseful: bool = True          # 저장할 가치가 있는지 (false면 클라이언트가 저장 생략)
     recommendedAction: Optional[str] = None
     reminderAt: Optional[int] = None
     # 2단계(카테고리별 추출) 결과를 담는 자리. 카테고리마다 필드가 다르므로 일단

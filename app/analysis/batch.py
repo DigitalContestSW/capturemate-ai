@@ -1,7 +1,8 @@
 import logging
 
 from app.analysis.grouping import group_indices
-from app.analysis.service import AnalysisService
+from app.analysis.preprocess import preprocess_for_embedding
+from app.analysis.service import AnalysisService, restore_in_response
 from app.config import Settings, settings
 from app.embeddings.base import EmbeddingClient, EmbeddingError
 from app.embeddings.factory import build_embedding_client
@@ -37,18 +38,24 @@ class BatchAnalyzer:
         if not items:
             return []
 
-        # ① 서버측 2차 마스킹 (클라이언트가 이미 마스킹했어도 한 번 더)
-        masked = [mask_text(item.maskedText) for item in items]
+        # ① 서버측 마스킹 (+ 복원 매핑). namespace로 항목 간 토큰 충돌 방지([PHONE_0_1] 등)
+        mask_results = [mask_text(item.maskedText, namespace=f"{i}_") for i, item in enumerate(items)]
+        masked = [mr.text for mr in mask_results]
         timestamps = [item.capturedAt for item in items]
 
         # ② 유사 항목 그룹핑 (임베딩 불가 시 각 항목을 개별 그룹으로)
         groups_idx = self._group(masked, timestamps)
 
-        # ③ 그룹별로 텍스트를 합쳐 LLM 분석 -> 그룹당 메모 1개
+        # ③ 그룹별로 텍스트를 합쳐 LLM 분석 -> 그룹당 메모 1개 (+ 소프트 토큰 복원)
         result: list[MemoGroup] = []
         for idx_list in groups_idx:
             merged = "\n\n".join(masked[i] for i in idx_list if masked[i])
+            merged_mapping: dict[str, str] = {}
+            for i in idx_list:
+                merged_mapping.update(mask_results[i].mapping)
+
             analysis = self._analysis.analyze(merged, locale)
+            analysis = restore_in_response(analysis, merged_mapping)
             member_ids = [items[i].clientId for i in idx_list]
             result.append(MemoGroup(memberClientIds=member_ids, analysis=analysis))
         return result
@@ -57,8 +64,11 @@ class BatchAnalyzer:
         if self._embedding is None:
             return [[i] for i in range(len(masked))]  # 그룹핑 없이 개별 처리(안전한 기본값)
 
+        # 임베딩(그룹핑)용으로만 전처리(노이즈 제거). LLM 분석엔 원본 masked를 쓴다.
+        # 전처리로 전부 비면 원본으로 폴백(빈 문자열 임베딩 방지).
+        embed_inputs = [(preprocess_for_embedding(m) or m)[:_EMBED_MAX_CHARS] for m in masked]
         try:
-            embeddings = self._embedding.embed([m[:_EMBED_MAX_CHARS] for m in masked])
+            embeddings = self._embedding.embed(embed_inputs)
         except EmbeddingError as exc:
             logger.warning("embedding 실패, 그룹핑 생략: %s", type(exc).__name__)
             return [[i] for i in range(len(masked))]

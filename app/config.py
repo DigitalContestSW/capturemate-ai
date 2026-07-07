@@ -30,6 +30,8 @@ class Settings:
     grouping_threshold: float      # 최종 임계값 (cosine × timeWeight ≥ 이 값이면 같은 그룹)
     grouping_tau_seconds: float    # 시간 가중치 감쇠 특성 시간(초). 클수록 시간 영향 약화
     grouping_w_min: float          # 시간 가중치 하한(0~1). 0이면 완전 감쇠 허용
+    kakao_rest_api_key: str | None
+    kakao_timeout_seconds: float
 
 
 def load_settings() -> Settings:
@@ -50,6 +52,8 @@ def load_settings() -> Settings:
         grouping_threshold=float(os.getenv("GROUPING_THRESHOLD", "0.7")),
         grouping_tau_seconds=float(os.getenv("GROUPING_TAU_SECONDS", "300")),
         grouping_w_min=float(os.getenv("GROUPING_W_MIN", "0.0")),
+        kakao_rest_api_key=os.getenv("KAKAO_REST_API_KEY"),
+        kakao_timeout_seconds=float(os.getenv("KAKAO_TIMEOUT_SECONDS", "3")),
     )
 
 

@@ -50,7 +50,7 @@ def build_classify_prompt(masked_text: str, locale: str, today_iso: str) -> str:
 아래 텍스트를 분석해 JSON 객체 '하나만' 출력하세요. 설명·마크다운·코드펜스 없이 순수 JSON만.
 
 카테고리는 반드시 다음 중 하나입니다: {categories}
-- schedule: 일정, 공지, 회의, 예약, 마감일, 신청/모집 마감 등 '기한이 있는 안내'
+- schedule: 일정, 행사, 공지, 회의, 예약, 예매 오픈, 마감일, 신청/모집 마감 등 '날짜나 시간이 있는 안내'
 - study: 시험, 강의, 학습 자료, 복습, 과제
 - life_info: 쿠폰, 할인, 쇼핑, 결제/영수증, 예매, 교통 등 일상 생활정보
 - restaurant: 맛집, 카페, 메뉴, 방문할 장소
@@ -64,6 +64,9 @@ JSON 스키마:
   "recommendedAction": "추천하는 다음 행동 (없으면 null)",
   "reminderAtIso": "마감일/일시가 있으면 ISO 8601 문자열(예: 2026-07-10T09:00:00), 없으면 null"
 }}
+
+schedule로 판단한 경우 summary는 메모에서 바로 읽기 좋은 한 문장으로 쓰세요.
+예: "7월 3일~13일 개최, 주요 상영작과 예매 오픈 일정 캡처"
 
 reminderAtIso는 텍스트에 실제 마감일이나 일시가 있을 때만 채우세요.
 '내일', '이번 주 금요일', '3일 후' 같은 표현은 오늘 날짜({today_iso}) 기준으로 계산하세요.

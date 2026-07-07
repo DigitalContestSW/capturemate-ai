@@ -1,4 +1,5 @@
 from app.llm.base import LlmError
+from app.rate_limit import gemini_rate_limiter
 
 
 class GeminiLlmClient:
@@ -19,6 +20,7 @@ class GeminiLlmClient:
     def generate(self, prompt: str) -> str:
         from google.genai import types
 
+        gemini_rate_limiter.acquire()  # 레이트리밋 완화
         try:
             response = self._client.models.generate_content(
                 model=self._model,

@@ -1,4 +1,5 @@
 from app.embeddings.base import EmbeddingError
+from app.rate_limit import gemini_rate_limiter
 
 
 class GeminiEmbeddingClient:
@@ -21,6 +22,7 @@ class GeminiEmbeddingClient:
 
         vectors: list[list[float]] = []
         for text in texts:
+            gemini_rate_limiter.acquire()  # 레이트리밋 완화
             try:
                 response = self._client.models.embed_content(model=self._model, contents=text)
             except Exception as exc:  # 네트워크 / 공급자 / SDK 오류

@@ -18,6 +18,7 @@ from app.integrations.kakao_local import KakaoLocalClient, enrich_restaurant_det
 from app.llm.base import LlmClient, LlmError
 from app.llm.factory import build_llm_client
 from app.models import AnalyzeResponse
+from app.privacy import restore_text
 
 logger = logging.getLogger("capturemate.analysis")
 
@@ -49,8 +50,9 @@ class AnalysisService:
         if not text:
             return _empty_response()
 
-        base = self._classify(text, locale)               # 1단계
-        details = self._extract_details(text, locale, base)  # 2단계 (없으면 None)
+        base = self._classify(text, locale)               # 1단계 (분류 + 유용성)
+        # 유용하지 않으면 2단계(세부 추출)를 건너뛴다 — 잡담/밈 등에 LLM 낭비 방지.
+        details = self._extract_details(text, locale, base) if base.isUseful else None
         return _to_response(base, details)
 
     # 1단계: 분류 + 기본 설명
@@ -152,6 +154,9 @@ def _to_response(base: LlmAnalysis, details: dict | None) -> AnalyzeResponse:
     # category는 허용 목록(화이트리스트)으로 강제한다. LLM이 엉뚱한 값을 줘도 안전하다.
     category = base.category if base.category in ALLOWED_CATEGORIES else UNKNOWN_CATEGORY
 
+    # 어느 서비스 카테고리에도 속하지 않으면(unknown) 저장할 가치가 없다고 보고 isUseful=false.
+    is_useful = base.isUseful and category != UNKNOWN_CATEGORY
+
     # 추천 액션은 2단계(카테고리 맞춤)가 있으면 그것을 우선하고, 없으면 1단계 기본값을 쓴다.
     # details 안에 중복 저장하지 않도록 꺼내서 최상위 필드로만 노출한다.
     recommended = base.recommendedAction
@@ -165,19 +170,22 @@ def _to_response(base: LlmAnalysis, details: dict | None) -> AnalyzeResponse:
         title=(base.title[:40] or "New capture"),
         summary=(base.summary or "No content to summarize."),
         category=category,
+        isUseful=is_useful,
         recommendedAction=recommended,
         reminderAt=_iso_to_epoch_ms(base.reminderAtIso),
         details=details,
     )
 
-# 로컬 테스트용 fallback 장소명. 2단계 details 실패 시에도 카카오 Local 보강 흐름을 확인하기 위해 고정값을 사용한다.
-# 실제 배포 전에는 base.title 기반 후보 추출 또는 LLM details 결과 사용으로 되돌려야 한다.
 def _fallback_restaurant_details(base: LlmAnalysis) -> dict:
-    # Android 맛집 카드 저장과 카카오 Local 검색에 필요한 최소 details 구조.
-    # 1단계 title을 장소명 후보로 사용하되, 검색 정확도가 낮을 수 있어 needsUserReview를 유지한다.
+    # 2단계 추출 실패 시 1단계 제목만 검색 후보로 사용한다.
+    # 기본 제목은 실제 상호가 아니므로 Kakao에 보내지 않는다.
+    candidate_name = base.title.strip()
+    if not candidate_name or candidate_name == "New capture":
+        candidate_name = None
+
     return {
         "restaurant": {
-            "name": "백소정",
+            "name": candidate_name,
             "address": None,
             "roadAddress": None,
             "neighborhood": None,
@@ -197,6 +205,42 @@ def _fallback_restaurant_details(base: LlmAnalysis) -> dict:
         "needsUserReview": True,
     }
 
+
+def restore_in_response(response: AnalyzeResponse, mapping: dict[str, str]) -> AnalyzeResponse:
+    """응답의 문자열 필드에 남은 placeholder를 원본으로 복원한다.
+
+    LLM이 문맥상 필요하다고 판단해 결과에 포함한 소프트 토큰([PHONE_1] 등)만
+    실제 값으로 되돌아간다. 하드 토큰([RRN]/[CARD])은 매핑에 없어 그대로 가려진다.
+    """
+    if not mapping:
+        return response
+
+    details = response.details
+    if details:
+        details = {key: _restore_value(value, mapping) for key, value in details.items()}
+
+    return response.model_copy(
+        update={
+            "title": restore_text(response.title, mapping),
+            "summary": restore_text(response.summary, mapping),
+            "recommendedAction": (
+                restore_text(response.recommendedAction, mapping)
+                if response.recommendedAction
+                else response.recommendedAction
+            ),
+            "details": details,
+        }
+    )
+
+
+def _restore_value(value, mapping: dict[str, str]):
+    if isinstance(value, str):
+        return restore_text(value, mapping)
+    if isinstance(value, list):
+        return [restore_text(v, mapping) if isinstance(v, str) else v for v in value]
+    return value
+
+
 def _iso_to_epoch_ms(value: str | None) -> int | None:
     # LLM은 ISO 문자열만 주고, 실제 epoch ms 변환은 여기서 안전하게 처리한다.
     if not value:
@@ -212,6 +256,7 @@ def _empty_response() -> AnalyzeResponse:
         title="New capture",
         summary="No content to summarize.",
         category=UNKNOWN_CATEGORY,
+        isUseful=False,  # 내용이 없으면 저장할 가치도 없음
         recommendedAction="메모로 저장",
         reminderAt=None,
         details=None,

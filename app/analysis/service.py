@@ -94,6 +94,15 @@ class AnalysisService:
             rest_api_key=self._config.kakao_rest_api_key,
             timeout_seconds=self._config.kakao_timeout_seconds,
         )
+        restaurants = details.get("restaurants")
+        if isinstance(restaurants, list):
+            details["restaurants"] = [
+                enrich_restaurant_details_with_kakao(item, client)
+                if isinstance(item, dict)
+                else item
+                for item in restaurants
+            ]
+            return details
         return enrich_restaurant_details_with_kakao(details, client)
 
     def _generate_json(self, prompt: str) -> dict | None:
@@ -198,7 +207,9 @@ def _restore_value(value, mapping: dict[str, str]):
     if isinstance(value, str):
         return restore_text(value, mapping)
     if isinstance(value, list):
-        return [restore_text(v, mapping) if isinstance(v, str) else v for v in value]
+        return [_restore_value(v, mapping) for v in value]
+    if isinstance(value, dict):
+        return {key: _restore_value(item, mapping) for key, item in value.items()}
     return value
 
 

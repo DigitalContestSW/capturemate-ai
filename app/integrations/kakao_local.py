@@ -36,10 +36,34 @@ class KakaoLocalClient:
         address: str | None = None,
         neighborhood: str | None = None,
     ) -> KakaoPlace | None:
-        query = _build_query(name, address, neighborhood)
-        if not query:
+        cleaned_name = _clean_string(name)
+        if not cleaned_name:
             return None
 
+        # 최초 검색은 식당명만 사용한다. 잘못 추출된 주소가 검색을 오염시키는 것을 막는다.
+        candidates = self._search_candidates(cleaned_name)
+
+        # 동명 지점이 여러 개일 때만 동네명을 추가하여 다시 검색한다.
+        cleaned_neighborhood = _clean_string(neighborhood)
+        if len(candidates) > 1 and cleaned_neighborhood:
+            refined = self._search_candidates(f"{cleaned_name} {cleaned_neighborhood}")
+            if refined:
+                candidates = refined
+
+        if not candidates:
+            return None
+
+        return max(
+            candidates,
+            key=lambda place: _score_place(
+                place,
+                name=cleaned_name,
+                address=address,
+                neighborhood=cleaned_neighborhood,
+            ),
+        )
+
+    def _search_candidates(self, query: str) -> list[KakaoPlace]:
         candidates: list[KakaoPlace] = []
         for category_code in _RESTAURANT_CATEGORY_CODES:
             candidates.extend(self._search_keyword(query, category_code=category_code))
@@ -49,13 +73,7 @@ class KakaoLocalClient:
         if not candidates:
             candidates.extend(self._search_keyword(query, category_code=None))
 
-        if not candidates:
-            return None
-
-        return max(
-            candidates,
-            key=lambda place: _score_place(place, name=name, address=address, neighborhood=neighborhood),
-        )
+        return candidates
 
     def _search_keyword(self, query: str, category_code: str | None) -> list[KakaoPlace]:
         params: dict[str, str | int] = {
@@ -99,9 +117,7 @@ def enrich_restaurant_details_with_kakao(details: dict[str, Any], client: KakaoL
     name = _clean_string(restaurant.get("name"))
     address = _clean_string(restaurant.get("address") or restaurant.get("roadAddress"))
     neighborhood = _clean_string(restaurant.get("neighborhood"))
-    has_coordinates = restaurant.get("latitude") is not None and restaurant.get("longitude") is not None
-
-    if not name or (address and has_coordinates and restaurant.get("mapProviderPlaceId")):
+    if not name:
         return details
 
     place = client.search_best_place(name=name, address=address, neighborhood=neighborhood)
@@ -113,8 +129,9 @@ def enrich_restaurant_details_with_kakao(details: dict[str, Any], client: KakaoL
     restaurant["name"] = restaurant.get("name") or place.name
     restaurant["address"] = restaurant.get("address") or place.address
     restaurant["roadAddress"] = restaurant.get("roadAddress") or place.road_address
-    restaurant["latitude"] = restaurant.get("latitude") or place.latitude
-    restaurant["longitude"] = restaurant.get("longitude") or place.longitude
+    # 좌표는 LLM 값이 아니라 Kakao 검색 결과를 기준으로 사용한다.
+    restaurant["latitude"] = place.latitude
+    restaurant["longitude"] = place.longitude
     restaurant["mapProvider"] = "kakao"
     restaurant["mapProviderPlaceId"] = place.id
 
@@ -134,12 +151,6 @@ def enrich_restaurant_details_with_kakao(details: dict[str, Any], client: KakaoL
         }
 
     return details
-
-
-def _build_query(name: str | None, address: str | None, neighborhood: str | None) -> str | None:
-    parts = [_clean_string(value) for value in (address, neighborhood, name)]
-    query = " ".join(part for part in parts if part)
-    return query or None
 
 
 def _place_from_document(document: dict[str, Any]) -> KakaoPlace:

@@ -30,6 +30,9 @@ class Settings:
     grouping_threshold: float      # 최종 임계값 (cosine × timeWeight ≥ 이 값이면 같은 그룹)
     grouping_tau_seconds: float    # 시간 가중치 감쇠 특성 시간(초). 클수록 시간 영향 약화
     grouping_w_min: float          # 시간 가중치 하한(0~1). 0이면 완전 감쇠 허용
+    # 세션 간 합병(새 그룹 ↔ 기존 메모) 파라미터
+    merge_threshold: float         # cosine ≥ 이 값이면 기존 메모에 합병 (시간 가중 없음)
+    merge_max_candidates: int      # 요청당 처리할 후보 메모 상한(서버측 방어)
     kakao_rest_api_key: str | None
     kakao_timeout_seconds: float
 
@@ -52,6 +55,9 @@ def load_settings() -> Settings:
         grouping_threshold=float(os.getenv("GROUPING_THRESHOLD", "0.7")),
         grouping_tau_seconds=float(os.getenv("GROUPING_TAU_SECONDS", "300")),
         grouping_w_min=float(os.getenv("GROUPING_W_MIN", "0.0")),
+        # 배치 내부(0.7)보다 높게 — 잘못된 합병이 기존 메모를 오염시키는 비용이 더 크므로 보수적.
+        merge_threshold=float(os.getenv("MERGE_THRESHOLD", "0.83")),
+        merge_max_candidates=int(os.getenv("MERGE_MAX_CANDIDATES", "30")),
         kakao_rest_api_key=os.getenv("KAKAO_REST_API_KEY"),
         kakao_timeout_seconds=float(os.getenv("KAKAO_TIMEOUT_SECONDS", "3")),
     )

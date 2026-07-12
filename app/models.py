@@ -29,6 +29,20 @@ class AnalyzeBatchItem(BaseModel):
     capturedAt: Optional[int] = None    # 캡처 시각(epoch ms) — 시간 근접 그룹핑에 사용
 
 
+class ExistingMemo(BaseModel):
+    """세션 간 합병 후보로 클라이언트가 함께 보내는 '이미 저장된 메모' 요약.
+
+    안드로이드가 로컬 Room의 최근 메모 중 일부(최근 N개)를 실어 보낸다.
+    title/summary는 원문이며, 서버가 임베딩/프롬프트에 쓰기 전에 마스킹한다
+    (OCR 텍스트와 동일하게 서버측 마스킹 -> 저장하지 않고 폐기).
+    """
+
+    memoId: str                         # 안드로이드 로컬 메모 식별자 (합병 대상 지정에 되돌려줌)
+    title: str = ""
+    summary: str = ""
+    category: Optional[str] = None       # 카테고리 (참고용; v1 매칭은 임베딩 유사도로만 판단)
+
+
 class AnalyzeBatchRequest(BaseModel):
     items: list[AnalyzeBatchItem]
     locale: str = "ko-KR"
@@ -37,6 +51,9 @@ class AnalyzeBatchRequest(BaseModel):
 class MemoGroup(BaseModel):
     memberClientIds: list[str]          # 이 메모로 묶인 스크린샷들의 clientId
     analysis: AnalyzeResponse           # 그룹 대표 분석 결과(그룹당 메모 1개)
+    # 세션 간 합병 결과: 기존 메모에 합쳐졌으면 그 memoId, 새 메모면 None.
+    # None -> 클라이언트는 새 메모 insert / 값이 있으면 그 메모를 analysis로 갱신(upsert).
+    mergeTargetMemoId: Optional[str] = None
 
 
 class AnalyzeBatchResponse(BaseModel):

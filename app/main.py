@@ -4,10 +4,11 @@ from typing import Annotated
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from pydantic import ValidationError
 
 from app.analysis.batch import BatchAnalyzer
 from app.analysis.service import AnalysisService
-from app.models import AnalyzeBatchItem, AnalyzeBatchResponse
+from app.models import AnalyzeBatchItem, AnalyzeBatchResponse, ExistingMemo
 
 logger = logging.getLogger("capturemate.api")
 
@@ -44,6 +45,32 @@ def _parse_metadata(metadata: str | None) -> list:
     return parsed if isinstance(parsed, list) else []
 
 
+def _parse_existing_memos(raw: str | None) -> list[ExistingMemo]:
+    """세션 간 합병 후보로 클라이언트가 보낸 기존 메모 요약을 파싱한다.
+
+    형식이 조금 어긋난 항목은 조용히 건너뛴다 — 후보 메모 파싱 실패가 전체 요청을
+    깨뜨리지 않게(합병은 부가 기능, 없으면 그냥 새 메모로 처리).
+    """
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="invalid existingMemos JSON") from exc
+    if not isinstance(parsed, list):
+        return []
+
+    memos: list[ExistingMemo] = []
+    for entry in parsed:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            memos.append(ExistingMemo.model_validate(entry))
+        except ValidationError:
+            continue
+    return memos
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "llmEnabled": analysis_service.llm_enabled}
@@ -54,17 +81,24 @@ async def analyze(
     images: Annotated[list[UploadFile], File()],
     locale: Annotated[str, Form()] = "ko-KR",
     metadata: Annotated[str | None, Form()] = None,
+    existingMemos: Annotated[str | None, Form()] = None,
 ) -> AnalyzeBatchResponse:
     """최종 프로덕션 엔드포인트.
 
-    여러 이미지(multipart) -> 백엔드 OCR -> 마스킹 -> 유사 그룹핑 -> LLM -> 그룹별 메모.
+    여러 이미지(multipart) -> 백엔드 OCR -> 마스킹 -> 유사 그룹핑
+      -> (신규) 기존 메모와 비교해 합병 여부 판단 -> LLM -> 그룹별 메모.
     이미지는 메모리에서만 처리하고 저장하지 않는다(즉시 폐기).
 
     metadata(선택): 이미지 순서와 1:1로 대응하는 JSON 배열.
       예) [{"clientId": "a.png", "capturedAt": 1760000000000}, ...]
       capturedAt이 있으면 시간 근접 그룹핑에 사용된다.
+
+    existingMemos(선택): 세션 간 합병 후보로 보내는 기존 메모 요약 JSON 배열.
+      예) [{"memoId": "m1", "title": "...", "summary": "...", "category": "study"}, ...]
+      새 그룹이 이 중 하나와 충분히 유사하면 새 메모 대신 그 메모를 갱신(합병)한다.
     """
     meta = _parse_metadata(metadata)
+    existing = _parse_existing_memos(existingMemos)
 
     try:
         engine = _get_ocr_engine()
@@ -103,6 +137,6 @@ async def analyze(
             )
         )
 
-    # 마스킹 -> 임베딩 그룹핑 -> 그룹별 LLM. 블로킹 작업이라 스레드풀에서 실행.
-    groups = await run_in_threadpool(batch_analyzer.analyze_batch, items, locale)
+    # 마스킹 -> 임베딩 그룹핑 -> 합병 매칭 -> 그룹별 LLM. 블로킹 작업이라 스레드풀에서 실행.
+    groups = await run_in_threadpool(batch_analyzer.analyze_batch, items, locale, existing)
     return AnalyzeBatchResponse(groups=groups)

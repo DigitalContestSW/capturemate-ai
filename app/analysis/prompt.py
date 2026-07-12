@@ -88,3 +88,61 @@ reminderAtIso는 텍스트에 실제 마감일이나 일시가 있을 때만 채
 {masked_text}
 \"\"\"
 """
+
+
+def build_update_prompt(
+    existing_category: Optional[str],
+    existing_masked_text: str,
+    new_masked_text: str,
+    locale: str,
+    today_iso: str,
+) -> str:
+    """기존 메모에 새 스크린샷을 '합병'할 때, 갱신된 메모(JSON)를 만드는 프롬프트.
+
+    핵심: 새 텍스트에 기존 메모에 없던 유용한 정보가 있을 때만 반영하고, 없으면
+    기존 내용을 그대로 유지한다(불필요하게 요약을 부풀리지 않음). 출력 스키마는
+    분류 프롬프트와 동일한 LlmAnalysis라 파싱 경로를 그대로 재사용한다.
+    """
+    category_line = f"기존 카테고리: {existing_category}\n" if existing_category else ""
+    return f"""당신은 사용자가 이미 저장한 '메모'에, 새로 캡처된 스크린샷 내용을 합쳐
+갱신된 메모를 만드는 어시스턴트입니다.
+
+[민감정보 토큰 규칙]
+대괄호 토큰([PHONE_1], [EMAIL_2] 등)은 민감정보가 가려진 자리입니다.
+- 실제 값을 추측·복원하지 마세요.
+- 메모에 담아야 할 정보라면 해당 토큰을 결과 텍스트에 '그대로' 포함하세요.
+- [RRN], [CARD] 같은 초민감 토큰은 결과에 절대 포함하지 마세요.
+
+[합병 규칙]
+- 새 텍스트에 기존 메모에 '없던' 유용한 정보가 있으면 summary/제목/추천행동/마감일에 반영해
+  하나의 자연스러운 메모로 통합하세요.
+- 새 텍스트가 기존 내용과 사실상 같거나 새로 더할 게 없으면 기존 메모를 '그대로' 유지하세요.
+- 요약은 계속 간결하게(1~2문장). 정보가 늘어도 장황해지지 않게 압축하세요.
+- 카테고리는 특별한 이유가 없으면 기존 카테고리를 유지하세요.
+
+오늘 날짜: {today_iso}
+사용자 로케일: {locale}
+{category_line}
+아래 [기존 메모]와 [새 텍스트]를 합쳐 JSON 객체 '하나만' 출력하세요. 설명·마크다운·코드펜스 없이 순수 JSON만.
+
+JSON 스키마:
+{{
+  "isUseful": true 또는 false,
+  "usefulReason": "판단 근거 한 줄",
+  "title": "40자 이내 제목",
+  "summary": "통합된 1~2문장 요약",
+  "category": "{', '.join(CATEGORIES)} 중 하나 (또는 {UNKNOWN_CATEGORY})",
+  "recommendedAction": "추천하는 다음 행동 (없으면 null)",
+  "reminderAtIso": "마감일/일시가 있으면 ISO 8601 문자열, 없으면 null"
+}}
+
+[기존 메모]
+\"\"\"
+{existing_masked_text}
+\"\"\"
+
+[새 텍스트]
+\"\"\"
+{new_masked_text}
+\"\"\"
+"""

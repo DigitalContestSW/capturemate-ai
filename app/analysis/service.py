@@ -12,12 +12,13 @@ from app.analysis.prompt import (
     UNKNOWN_CATEGORY,
     LlmAnalysis,
     build_classify_prompt,
+    build_update_prompt,
 )
 from app.config import Settings, settings
 from app.integrations.kakao_local import KakaoLocalClient, enrich_restaurant_details_with_kakao
 from app.llm.base import LlmClient, LlmError
 from app.llm.factory import build_llm_client
-from app.models import AnalyzeResponse
+from app.models import AnalyzeResponse, ExistingMemo
 from app.privacy import restore_text
 
 logger = logging.getLogger("capturemate.analysis")
@@ -54,6 +55,42 @@ class AnalysisService:
         # 유용하지 않으면 2단계(세부 추출)를 건너뛴다 — 잡담/밈 등에 LLM 낭비 방지.
         details = self._extract_details(text, locale, base) if base.isUseful else None
         return _to_response(base, details)
+
+    def update(
+        self,
+        existing: ExistingMemo,
+        existing_masked_text: str,
+        new_masked_text: str,
+        locale: str,
+    ) -> AnalyzeResponse:
+        """기존 메모에 새 스크린샷을 합병해 '갱신된' 메모를 만든다 (LLM 1회).
+
+        신뢰성: 어느 단계든 실패하면 기존 메모를 '그대로' 유지한다(합병이 메모를 망치지 않음).
+        v1은 카테고리별 2단계 세부 추출은 생략하고 통합 요약까지만 갱신한다.
+        """
+        base = self._update_base(existing, existing_masked_text, new_masked_text, locale)
+        return _to_response(base, None)
+
+    def _update_base(
+        self,
+        existing: ExistingMemo,
+        existing_masked_text: str,
+        new_masked_text: str,
+        locale: str,
+    ) -> LlmAnalysis:
+        if self._client is None:
+            return _existing_as_analysis(existing)  # LLM 미사용 -> 기존 유지
+
+        prompt = build_update_prompt(
+            existing.category, existing_masked_text, new_masked_text, locale, _today()
+        )
+        data = self._generate_json(prompt)
+        if data is None:
+            return _existing_as_analysis(existing)  # 호출 실패 -> 기존 유지
+        try:
+            return LlmAnalysis.model_validate(data)
+        except ValidationError:
+            return _existing_as_analysis(existing)  # 검증 실패 -> 기존 유지
 
     # ── 1단계: 분류 + 기본 설명 ──────────────────────────────────────────────
     def _classify(self, text: str, locale: str) -> LlmAnalysis:
@@ -120,6 +157,16 @@ class AnalysisService:
 
 def _today() -> str:
     return date.today().isoformat()
+
+
+def _existing_as_analysis(existing: ExistingMemo) -> LlmAnalysis:
+    """합병 갱신이 실패했을 때의 폴백: 기존 메모를 변경 없이 그대로 반영한다."""
+    return LlmAnalysis(
+        title=existing.title,
+        summary=existing.summary,
+        category=existing.category or UNKNOWN_CATEGORY,
+        isUseful=True,
+    )
 
 
 def _parse_json(raw: str) -> dict:

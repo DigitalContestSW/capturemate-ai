@@ -131,10 +131,10 @@ JSON 스키마:
     "address": "주소, 없으면 null",
     "roadAddress": "도로명 주소, 없으면 null",
     "neighborhood": "동네명 예: 성수동, 없으면 null",
-    "latitude": 37.5441,
-    "longitude": 127.0558,
-    "mapProvider": "kakao 또는 naver 또는 google, 외부 API로 확인한 경우만. 아니면 null",
-    "mapProviderPlaceId": "지도 API 장소 ID, 없으면 null",
+    "latitude": null,
+    "longitude": null,
+    "mapProvider": null,
+    "mapProviderPlaceId": null,
     "menus": [
       {{"name": "에그베네딕트", "price": 18000, "currency": "KRW"}}
     ],
@@ -170,8 +170,9 @@ JSON 스키마:
 - 메뉴 가격은 정수 원화로 변환하세요. 예: "18,000원" -> 18000.
 - 1인 예상 금액은 메뉴/가격 근거가 있을 때만 채우세요.
 - 태그는 최대 5개, features는 최대 5개, recommendedActions는 최대 3개로 제한하세요.
-- 주소나 좌표가 없으면 needsUserReview를 true로 두세요.
-- 외부 지도 API를 실제로 호출하지 않은 상태에서 좌표, provider, placeId를 지어내지 마세요.
+- 주소가 없으면 needsUserReview를 true로 두세요.
+- 좌표와 지도 제공자 정보는 서버가 Kakao API로 확인합니다. latitude, longitude,
+  mapProvider, mapProviderPlaceId는 OCR 텍스트에 값이 있어도 반드시 null로 출력하세요.
 - neighborhood가 있으면 group을 만들고, title은 "<동네명> 맛집" 형식으로 작성하세요.
 - 정보가 가게명뿐이면 name만 채우고 나머지는 null/빈 배열, confidence는 0.6 이하로 두세요.
 

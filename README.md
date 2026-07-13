@@ -133,6 +133,198 @@ curl http://localhost:8001/health/ready
 현재 Docker 이미지는 배포 안정성을 우선해 OCR/NER 의존성을 함께 설치합니다. 이미지 크기 최적화는
 후속 작업에서 runtime requirements 분리로 진행합니다.
 
+## 배포
+
+현재 경진대회 검증용 배포 endpoint:
+
+```text
+https://api.cloudnetaaws.click
+```
+
+구성:
+
+```text
+Android
+ → Route 53 (api.cloudnetaaws.click)
+ → Application Load Balancer (HTTPS :443)
+ → ECS Fargate task (HTTP :8001)
+ → FastAPI
+```
+
+AWS 리소스:
+
+- Region: `ap-northeast-2`
+- ECR repository: `974346102227.dkr.ecr.ap-northeast-2.amazonaws.com/capturemate-ai`
+- ECS cluster/service/task family: `capturemate-ai`
+- ALB: `capturemate-ai-alb`
+- ALB DNS: `capturemate-ai-alb-1247019725.ap-northeast-2.elb.amazonaws.com`
+- Target group: `capturemate-ai-tg`
+- Route 53 hosted zone: `cloudnetaaws.click`
+- API domain: `api.cloudnetaaws.click`
+- ACM certificate region: `ap-northeast-2`
+- CloudWatch log group: `/ecs/capturemate-ai`
+
+현재 배포된 이미지 태그:
+
+```text
+974346102227.dkr.ecr.ap-northeast-2.amazonaws.com/capturemate-ai:605edc8
+```
+
+운영 환경변수는 ECS task definition에서 관리합니다. `LLM_API_KEY`, `JWT_ACCESS_SECRET`,
+`JWT_REFRESH_SECRET`, `KAKAO_REST_API_KEY` 같은 민감값은 Secrets Manager `ValueFrom`으로 주입합니다.
+실제 secret 값은 저장소와 문서에 기록하지 않습니다.
+
+배포 확인:
+
+```bash
+curl https://api.cloudnetaaws.click/health/live
+curl https://api.cloudnetaaws.click/health/ready
+```
+
+로컬에서 새 이미지를 ECR에 올리는 절차:
+
+```bash
+aws ecr get-login-password --profile capturemate --region ap-northeast-2 \
+  | docker login --username AWS --password-stdin 974346102227.dkr.ecr.ap-northeast-2.amazonaws.com
+
+docker buildx build --platform linux/amd64 --build-arg BAKE_OCR_MODELS=false -t capturemate-ai:amd64 --load .
+
+docker tag capturemate-ai:amd64 974346102227.dkr.ecr.ap-northeast-2.amazonaws.com/capturemate-ai:<commit-sha>
+docker push 974346102227.dkr.ecr.ap-northeast-2.amazonaws.com/capturemate-ai:<commit-sha>
+```
+
+Apple Silicon 로컬 빌드는 `BAKE_OCR_MODELS=false`를 사용합니다. 최종 안정화용 이미지는 native amd64
+빌더나 CI에서 기본값(`BAKE_OCR_MODELS=true`)으로 OCR 모델을 이미지에 포함해 빌드하는 것을 권장합니다.
+
+기존 API Gateway HTTP API endpoint는 29~30초 통합 timeout 제한 때문에 최종 Android 배포 경로에서
+사용하지 않습니다. Android release build는 `https://api.cloudnetaaws.click/`을 기본 backend URL로
+사용합니다.
+
+보안 그룹은 다음 구조를 기준으로 관리합니다.
+
+- ALB security group: `80`, `443` inbound from `0.0.0.0/0`
+- Fargate security group: `8001` inbound from ALB security group only
+
+Fargate task의 public IP는 outbound 의존성(ECR pull, Secrets Manager, CloudWatch Logs, 모델 다운로드 등)을
+고려해 유지할 수 있습니다. 외부 inbound 접근은 security group에서 ALB source로 제한합니다.
+
+CI/CD는 GitHub Actions로 구성합니다. `main` 브랜치에 push되거나 수동 실행하면 테스트, linux/amd64
+이미지 빌드, ECR push, ECS service 자동 배포, 배포 후 health check를 순서대로 수행합니다.
+
+### GitHub Actions CI/CD
+
+`.github/workflows/backend-ci-cd.yml`은 다음을 수행합니다.
+
+- PR to `main`: Python 의존성 설치, py_compile, unit test
+- Push to `main`: 위 검증 후 linux/amd64 Docker image build, ECR push, ECS service deploy
+- Manual dispatch: OCR 모델 bake 여부를 선택해 image build, ECR push, ECS service deploy
+
+이미지 태그:
+
+- `<short-commit-sha>`
+- `latest` (`main` push일 때만)
+
+배포 job은 현재 ECS task definition을 조회한 뒤 `capturemate-ai` 컨테이너의 image만 새 ECR image로 교체해
+새 revision을 등록합니다. 따라서 ECS 콘솔에서 설정한 환경변수, Secrets Manager 참조, 로그 설정, CPU/메모리,
+포트 매핑은 그대로 유지됩니다.
+
+배포 대상:
+
+```text
+ECS_CLUSTER=capturemate-ai
+ECS_SERVICE=capturemate-ai
+ECS_TASK_DEFINITION=capturemate-ai
+ECS_CONTAINER_NAME=capturemate-ai
+HEALTHCHECK_URL=https://api.cloudnetaaws.click/health/ready
+```
+
+GitHub Actions가 AWS에 접근하려면 repository secret을 설정합니다.
+
+```text
+AWS_ROLE_TO_ASSUME=arn:aws:iam::974346102227:role/<github-actions-backend-deploy-role>
+```
+
+권장 방식은 GitHub OIDC AssumeRole입니다. AWS access key를 GitHub secret에 저장하지 않습니다.
+OIDC role trust policy는 이 repository의 `main` 브랜치만 허용하도록 제한합니다.
+
+예시 trust policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::974346102227:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": "repo:DigitalContestSW/capturemate-ai:ref:refs/heads/main"
+        }
+      }
+    }
+  ]
+}
+```
+
+Role permission policy는 ECR push와 ECS service 배포에 필요한 범위로 제한합니다. `iam:PassRole`의
+resource에는 ECS task definition에 설정된 task execution role과 task role ARN을 지정합니다.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:GetAuthorizationToken"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:CompleteLayerUpload",
+        "ecr:DescribeRepositories",
+        "ecr:InitiateLayerUpload",
+        "ecr:PutImage",
+        "ecr:UploadLayerPart"
+      ],
+      "Resource": "arn:aws:ecr:ap-northeast-2:974346102227:repository/capturemate-ai"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecs:DescribeTaskDefinition",
+        "ecs:RegisterTaskDefinition"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecs:DescribeServices",
+        "ecs:UpdateService"
+      ],
+      "Resource": "arn:aws:ecs:ap-northeast-2:974346102227:service/capturemate-ai/capturemate-ai"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:PassRole"
+      ],
+      "Resource": "arn:aws:iam::974346102227:role/ecsTaskExecutionRole"
+    }
+  ]
+}
+```
+
 ## API
 
 ### `GET /health`
@@ -143,7 +335,8 @@ curl http://localhost:8001/health/ready
 
 ### `GET /health/ready`
 트래픽 수신 준비 상태 확인용 엔드포인트입니다. PaddleOCR 모델 로딩이 끝나면 `200`, 아직 준비되지 않았거나
-로딩에 실패하면 `503`을 반환합니다. ECS health check에는 이 경로를 사용합니다.
+로딩에 실패하면 `503`을 반환합니다. ALB/ECS liveness health check는 빠르게 응답하는 `/health/live`를
+사용하고, 배포 후 readiness 검증에는 이 경로를 사용합니다.
 
 ### `POST /v1/auth/google` (application/json)
 Android Google 로그인에서 받은 Google ID token을 서버 JWT로 교환합니다.

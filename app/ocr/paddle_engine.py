@@ -45,7 +45,7 @@ class PaddleOcrEngine:
     한 번만 로드한다(최초 생성 시 모델 다운로드가 일어날 수 있음).
     """
 
-    def __init__(self, lang: str = "korean") -> None:
+    def __init__(self, lang: str = "korean", cpu_threads: int = 2) -> None:
         from paddleocr import PaddleOCR
 
         self._ocr = PaddleOCR(
@@ -60,7 +60,7 @@ class PaddleOcrEngine:
             #   모바일 검출은 가벼우니 2048로 넉넉히 준다. 느리면 낮추면 된다.
             text_det_limit_side_len=2048,
             text_det_limit_type="max",
-            cpu_threads=10,
+            cpu_threads=cpu_threads,
             # 스크린샷엔 불필요한 문서 전처리 단계 비활성 (더 빠르고 단순)
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,

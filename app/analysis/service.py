@@ -117,7 +117,17 @@ class AnalysisService:
             rest_api_key=self._config.kakao_rest_api_key,
             timeout_seconds=self._config.kakao_timeout_seconds,
         )
-        enriched = enrich_restaurant_details_with_kakao(details, client)
+        restaurants = details.get("restaurants")
+        if isinstance(restaurants, list):
+            details["restaurants"] = [
+                enrich_restaurant_details_with_kakao(item, client)
+                if isinstance(item, dict)
+                else item
+                for item in restaurants
+            ]
+            enriched = details
+        else:
+            enriched = enrich_restaurant_details_with_kakao(details, client)
         logger.info("카카오 로컬 보강 완료 (%.0fms)", (time.perf_counter() - started) * 1000)
         return enriched
 
@@ -234,7 +244,9 @@ def _restore_value(value, mapping: dict[str, str]):
     if isinstance(value, str):
         return restore_text(value, mapping)
     if isinstance(value, list):
-        return [restore_text(v, mapping) if isinstance(v, str) else v for v in value]
+        return [_restore_value(v, mapping) for v in value]
+    if isinstance(value, dict):
+        return {key: _restore_value(item, mapping) for key, item in value.items()}
     return value
 
 

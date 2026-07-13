@@ -142,7 +142,8 @@ def enrich_restaurant_details_with_kakao(details: dict[str, Any], client: KakaoL
         details["needsUserReview"] = False
         details["confidence"] = max(float(details.get("confidence") or 0.5), 0.75)
 
-    if not details.get("group") and restaurant.get("neighborhood"):
+    # Kakao로 보강된 최종 동네를 기준으로 그룹을 다시 정규화한다.
+    if restaurant.get("neighborhood"):
         neighborhood_value = restaurant["neighborhood"]
         details["group"] = {
             "id": _slugify_korean_safe(f"{neighborhood_value}-restaurant"),

@@ -4,6 +4,8 @@ pydantic==2.13.4
 python-dotenv
 python-multipart
 google-genai
+google-auth
+PyJWT
 
 paddleocr
 paddlepaddle

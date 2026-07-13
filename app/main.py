@@ -2,16 +2,31 @@ import json
 import logging
 from typing import Annotated
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.analysis.batch import BatchAnalyzer
 from app.analysis.service import AnalysisService
-from app.models import AnalyzeBatchItem, AnalyzeBatchResponse
+from app.auth import (
+    get_current_user,
+    issue_access_token_from_refresh,
+    issue_token_pair,
+    verify_google_id_token,
+)
+from app.config import settings
+from app.models import (
+    AnalyzeBatchItem,
+    AnalyzeBatchResponse,
+    AuthTokenResponse,
+    GoogleAuthRequest,
+    RefreshTokenRequest,
+)
 
 logger = logging.getLogger("capturemate.api")
 
 app = FastAPI(title="CaptureMate AI")
+bearer_scheme = HTTPBearer(auto_error=False)
 
 # 시작 시 1회 생성 — LLM 클라이언트 생성/모델 로드가 한 번만 일어나게 한다.
 analysis_service = AnalysisService()
@@ -44,9 +59,34 @@ def _parse_metadata(metadata: str | None) -> list:
     return parsed if isinstance(parsed, list) else []
 
 
+def _require_user(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]):
+    return get_current_user(credentials)
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "llmEnabled": analysis_service.llm_enabled}
+
+
+@app.post("/v1/auth/google", response_model=AuthTokenResponse)
+async def authenticate_with_google(request: GoogleAuthRequest) -> AuthTokenResponse:
+    google_claims = await run_in_threadpool(verify_google_id_token, request.idToken)
+    access_token, refresh_token = issue_token_pair(google_claims)
+    return AuthTokenResponse(
+        accessToken=access_token,
+        refreshToken=refresh_token,
+        accessExpiresIn=settings.jwt_access_ttl_seconds,
+        refreshExpiresIn=settings.jwt_refresh_ttl_seconds,
+    )
+
+
+@app.post("/v1/auth/refresh", response_model=AuthTokenResponse)
+def refresh_access_token(request: RefreshTokenRequest) -> AuthTokenResponse:
+    access_token = issue_access_token_from_refresh(request.refreshToken)
+    return AuthTokenResponse(
+        accessToken=access_token,
+        accessExpiresIn=settings.jwt_access_ttl_seconds,
+    )
 
 
 @app.post("/v1/analyze", response_model=AnalyzeBatchResponse)
@@ -54,6 +94,7 @@ async def analyze(
     images: Annotated[list[UploadFile], File()],
     locale: Annotated[str, Form()] = "ko-KR",
     metadata: Annotated[str | None, Form()] = None,
+    _user=Depends(_require_user),
 ) -> AnalyzeBatchResponse:
     """최종 프로덕션 엔드포인트.
 

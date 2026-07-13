@@ -290,8 +290,11 @@ resource에는 ECS task definition에 설정된 task execution role과 task role
       "Effect": "Allow",
       "Action": [
         "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
         "ecr:CompleteLayerUpload",
+        "ecr:DescribeImages",
         "ecr:DescribeRepositories",
+        "ecr:GetDownloadUrlForLayer",
         "ecr:InitiateLayerUpload",
         "ecr:PutImage",
         "ecr:UploadLayerPart"

@@ -168,7 +168,7 @@ def _split_restaurant_analysis(
 
     valid_refs = {f"S{i}" for i in range(len(idx_list))}
     covered_refs: set[str] = set()
-    groups: list[MemoGroup] = []
+    buckets: dict[str, dict[str, list]] = {}
 
     for entry in extracted:
         if not isinstance(entry, dict):
@@ -184,7 +184,7 @@ def _split_restaurant_analysis(
         place_details = {
             key: value
             for key, value in entry.items()
-            if key not in {"sourceRefs", "title", "summary", "recommendedAction"}
+            if key not in {"sourceRefs", "title", "topicKey", "summary", "recommendedAction"}
         }
         restaurant = place_details.get("restaurant")
         restaurant_name = restaurant.get("name") if isinstance(restaurant, dict) else None
@@ -195,6 +195,53 @@ def _split_restaurant_analysis(
             items[idx_list[int(ref[1:])]].clientId
             for ref in refs
         ]
+        topic_key = entry.get("topicKey")
+        normalized_topic = (
+            _normalize_topic_key(topic_key)
+            if isinstance(topic_key, str) and topic_key.strip()
+            else None
+        )
+        source_key = ",".join(sorted(refs))
+        bucket_key = f"topic:{normalized_topic}" if normalized_topic else f"sources:{source_key}"
+        bucket = buckets.setdefault(
+            bucket_key,
+            {"entries": [], "member_ids": [], "topic_keys": []},
+        )
+        bucket["entries"].append(
+            {
+                "title": str(title)[:40],
+                "summary": str(summary),
+                "recommendedAction": recommended_action,
+                "details": place_details,
+            }
+        )
+        bucket["member_ids"].extend(member_ids)
+        if normalized_topic:
+            bucket["topic_keys"].append(normalized_topic)
+
+    # 누락된 원본이 있으면 사진을 임의의 가게에 붙이지 않고 개별 재분석한다.
+    if covered_refs != valid_refs:
+        return None
+
+    groups: list[MemoGroup] = []
+    for bucket in buckets.values():
+        entries = bucket["entries"]
+        member_ids = list(dict.fromkeys(bucket["member_ids"]))
+        if len(entries) == 1:
+            entry = entries[0]
+            details = entry["details"]
+            title = entry["title"]
+            summary = entry["summary"]
+            recommended_action = entry["recommendedAction"]
+        else:
+            details = _combine_comparison_details(entries)
+            topic_keys = bucket["topic_keys"]
+            title = topic_keys[0] if topic_keys else analysis.title
+            summary = " ".join(
+                dict.fromkeys(entry["summary"] for entry in entries if entry["summary"])
+            )
+            recommended_action = analysis.recommendedAction
+
         groups.append(
             MemoGroup(
                 memberClientIds=member_ids,
@@ -203,13 +250,68 @@ def _split_restaurant_analysis(
                         "title": str(title)[:40],
                         "summary": str(summary),
                         "recommendedAction": recommended_action,
-                        "details": place_details,
+                        "details": details,
                     }
                 ),
             )
         )
-
-    # 누락된 원본이 있으면 사진을 임의의 가게에 붙이지 않고 개별 재분석한다.
-    if covered_refs != valid_refs:
-        return None
     return groups
+
+
+def _normalize_topic_key(value: str) -> str:
+    return " ".join(value.casefold().split()).strip()
+
+
+def _combine_comparison_details(entries: list[dict]) -> dict:
+    menus: list[dict] = []
+    tags: list[str] = []
+    features: list[str] = []
+    actions: list[dict] = []
+    confidences: list[float] = []
+
+    for entry in entries:
+        details = entry["details"]
+        restaurant = details.get("restaurant")
+        if not isinstance(restaurant, dict):
+            continue
+        restaurant_name = restaurant.get("name")
+        for menu in restaurant.get("menus") or []:
+            if not isinstance(menu, dict):
+                continue
+            combined_menu = dict(menu)
+            menu_name = str(combined_menu.get("name") or "메뉴")
+            if restaurant_name:
+                combined_menu["name"] = f"{restaurant_name} · {menu_name}"
+            menus.append(combined_menu)
+        tags.extend(str(value) for value in restaurant.get("tags") or [] if value)
+        features.extend(str(value) for value in restaurant.get("features") or [] if value)
+        actions.extend(
+            value
+            for value in restaurant.get("recommendedActions") or []
+            if isinstance(value, dict)
+        )
+        confidence = details.get("confidence")
+        if isinstance(confidence, (int, float)):
+            confidences.append(float(confidence))
+
+    return {
+        "restaurant": {
+            "name": None,
+            "address": None,
+            "roadAddress": None,
+            "neighborhood": None,
+            "latitude": None,
+            "longitude": None,
+            "mapProvider": None,
+            "mapProviderPlaceId": None,
+            "menus": menus,
+            "estimatedPricePerPersonMin": None,
+            "estimatedPricePerPersonMax": None,
+            "tags": list(dict.fromkeys(tags))[:5],
+            "features": list(dict.fromkeys(features))[:5],
+            "recommendedActions": actions[:3],
+        },
+        "group": None,
+        "confidence": min(confidences, default=0.5),
+        "needsUserReview": True,
+    }

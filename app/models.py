@@ -3,6 +3,22 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+class GoogleAuthRequest(BaseModel):
+    idToken: str = Field(min_length=1)
+
+
+class RefreshTokenRequest(BaseModel):
+    refreshToken: str = Field(min_length=1)
+
+
+class AuthTokenResponse(BaseModel):
+    accessToken: str
+    refreshToken: str | None = None
+    tokenType: str = "Bearer"
+    accessExpiresIn: int
+    refreshExpiresIn: int | None = None
+
+
 class AnalyzeRequest(BaseModel):
     maskedText: str = Field(min_length=1)
     locale: str = "ko-KR"

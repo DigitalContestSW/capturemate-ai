@@ -32,6 +32,13 @@ class Settings:
     grouping_w_min: float          # 시간 가중치 하한(0~1). 0이면 완전 감쇠 허용
     kakao_rest_api_key: str | None
     kakao_timeout_seconds: float
+    google_web_client_id: str | None
+    jwt_access_secret: str | None
+    jwt_refresh_secret: str | None
+    jwt_issuer: str
+    jwt_audience: str
+    jwt_access_ttl_seconds: int
+    jwt_refresh_ttl_seconds: int
 
 
 def load_settings() -> Settings:
@@ -54,6 +61,13 @@ def load_settings() -> Settings:
         grouping_w_min=float(os.getenv("GROUPING_W_MIN", "0.0")),
         kakao_rest_api_key=os.getenv("KAKAO_REST_API_KEY"),
         kakao_timeout_seconds=float(os.getenv("KAKAO_TIMEOUT_SECONDS", "3")),
+        google_web_client_id=os.getenv("GOOGLE_WEB_CLIENT_ID"),
+        jwt_access_secret=os.getenv("JWT_ACCESS_SECRET"),
+        jwt_refresh_secret=os.getenv("JWT_REFRESH_SECRET"),
+        jwt_issuer=os.getenv("JWT_ISSUER", "capturemate-api"),
+        jwt_audience=os.getenv("JWT_AUDIENCE", "capturemate-android"),
+        jwt_access_ttl_seconds=int(os.getenv("JWT_ACCESS_TTL_SECONDS", "1800")),
+        jwt_refresh_ttl_seconds=int(os.getenv("JWT_REFRESH_TTL_SECONDS", "259200")),
     )
 
 

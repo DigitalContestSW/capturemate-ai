@@ -1,5 +1,10 @@
+import logging
+import time
+
 from app.llm.base import LlmError
 from app.rate_limit import gemini_rate_limiter
+
+logger = logging.getLogger("capturemate.llm")
 
 
 class GeminiLlmClient:
@@ -20,7 +25,10 @@ class GeminiLlmClient:
     def generate(self, prompt: str) -> str:
         from google.genai import types
 
-        gemini_rate_limiter.acquire()  # 레이트리밋 완화
+        # 내용은 남기지 않고 길이만 — 어느 호출이 느린지/큰지 파악용.
+        logger.debug("Gemini generate 호출: model=%s prompt_chars=%d", self._model, len(prompt))
+        gemini_rate_limiter.acquire()  # 레이트리밋 완화 (대기가 여기 포함될 수 있음)
+        started = time.perf_counter()
         try:
             response = self._client.models.generate_content(
                 model=self._model,
@@ -33,10 +41,21 @@ class GeminiLlmClient:
                 ),
             )
         except Exception as exc:  # 네트워크 / 공급자 / SDK 오류
-            # 타입명만 남긴다 — 프롬프트나 응답 내용은 절대 노출하지 않는다.
-            raise LlmError(f"Gemini request failed: {type(exc).__name__}") from exc
+            # 오류 '종류 + HTTP 상태코드'까지 남긴다(429=쿼터/레이트, 503=서버, 500 등).
+            # 상태코드·예외 클래스명은 사용자 텍스트를 담지 않아 안전 — 원인 특정에 필수.
+            status = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+            detail = type(exc).__name__ + (f"({status})" if status else "")
+            logger.warning(
+                "Gemini generate 실패: %s (%.0fms)",
+                detail,
+                (time.perf_counter() - started) * 1000,
+            )
+            raise LlmError(f"Gemini request failed: {detail}") from exc
 
         text = (getattr(response, "text", None) or "").strip()
         if not text:
             raise LlmError("Gemini returned an empty response")
+        logger.debug(
+            "Gemini generate 응답: chars=%d (%.0fms)", len(text), (time.perf_counter() - started) * 1000
+        )
         return text

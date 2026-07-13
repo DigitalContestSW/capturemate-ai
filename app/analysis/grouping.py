@@ -1,5 +1,8 @@
+import logging
 import math
 from typing import Optional
+
+logger = logging.getLogger("capturemate.grouping")
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -47,6 +50,7 @@ def group_indices(
         if root_a != root_b:
             parent[root_b] = root_a
 
+    linked = 0  # threshold를 넘겨 실제로 묶인 쌍의 수(임계값 튜닝 감 잡기용)
     for i in range(n):
         for j in range(i + 1, n):
             sim = _cosine(embeddings[i], embeddings[j])
@@ -59,8 +63,13 @@ def group_indices(
                 time_weight = _time_weight(abs(ti - tj) / 1000.0, tau_seconds, w_min)
             if sim * time_weight >= threshold:
                 union(i, j)
+                linked += 1
 
     groups: dict[int, list[int]] = {}
     for i in range(n):
         groups.setdefault(find(i), []).append(i)
-    return list(groups.values())
+    result = list(groups.values())
+    logger.debug(
+        "group_indices: n=%d threshold=%.2f 연결쌍=%d -> 그룹 %d개", n, threshold, linked, len(result)
+    )
+    return result

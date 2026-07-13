@@ -16,6 +16,7 @@ def build_embedding_client(config: Settings) -> EmbeddingClient | None:
         return GeminiEmbeddingClient(
             api_key=config.llm_api_key,
             model=config.llm_embedding_model,
+            timeout_seconds=config.llm_embedding_timeout_seconds,
         )
 
     # 임베딩 미구현 공급자 -> None (그룹핑 없이 개별 처리)

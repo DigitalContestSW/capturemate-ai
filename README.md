@@ -93,6 +93,46 @@ py -m uvicorn app.main:app --reload --port 8001
 에뮬레이터에서는 로컬 PC 서버를 `http://10.0.2.2:8001`로 접근합니다.
 `http://localhost:8001/docs`에서 API를 테스트할 수 있습니다.
 
+## Docker
+
+로컬 컨테이너 빌드:
+
+```bash
+docker build -t capturemate-ai:local .
+```
+
+로컬 컨테이너 실행:
+
+```bash
+docker run --rm -p 8001:8001 \
+  -e LLM_API_KEY="$LLM_API_KEY" \
+  -e GOOGLE_WEB_CLIENT_ID="$GOOGLE_WEB_CLIENT_ID" \
+  -e JWT_ACCESS_SECRET="$JWT_ACCESS_SECRET" \
+  -e JWT_REFRESH_SECRET="$JWT_REFRESH_SECRET" \
+  -e KAKAO_REST_API_KEY="$KAKAO_REST_API_KEY" \
+  capturemate-ai:local
+```
+
+Apple Silicon Mac에서 ECR/ECS용 이미지를 로컬 검증할 때는 linux/amd64로 빌드합니다.
+
+```bash
+docker buildx build --platform linux/amd64 --build-arg BAKE_OCR_MODELS=false -t capturemate-ai:amd64 --load .
+```
+
+Apple Silicon에서 `linux/amd64` 이미지를 QEMU로 빌드할 때는 PaddleOCR 모델 로딩이 실패할 수 있어
+`BAKE_OCR_MODELS=false`를 사용합니다. Native amd64 CI/빌더에서는 기본값(`true`)으로 모델을 이미지에
+미리 포함할 수 있습니다.
+
+컨테이너 health check:
+
+```bash
+curl http://localhost:8001/health/live
+curl http://localhost:8001/health/ready
+```
+
+현재 Docker 이미지는 배포 안정성을 우선해 OCR/NER 의존성을 함께 설치합니다. 이미지 크기 최적화는
+후속 작업에서 runtime requirements 분리로 진행합니다.
+
 ## API
 
 ### `GET /health`

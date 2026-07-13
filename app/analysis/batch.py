@@ -205,7 +205,7 @@ def _split_restaurant_analysis(
         bucket_key = f"topic:{normalized_topic}" if normalized_topic else f"sources:{source_key}"
         bucket = buckets.setdefault(
             bucket_key,
-            {"entries": [], "member_ids": [], "topic_keys": []},
+            {"entries": [], "member_ids": [], "topic_keys": [], "source_keys": []},
         )
         bucket["entries"].append(
             {
@@ -218,6 +218,7 @@ def _split_restaurant_analysis(
         bucket["member_ids"].extend(member_ids)
         if normalized_topic:
             bucket["topic_keys"].append(normalized_topic)
+        bucket["source_keys"].append(source_key)
 
     # 누락된 원본이 있으면 사진을 임의의 가게에 붙이지 않고 개별 재분석한다.
     if covered_refs != valid_refs:
@@ -233,6 +234,7 @@ def _split_restaurant_analysis(
             title = entry["title"]
             summary = entry["summary"]
             recommended_action = entry["recommendedAction"]
+            server_memo_id = _build_restaurant_server_memo_id(details, title)
         else:
             details = _combine_comparison_details(entries)
             topic_keys = bucket["topic_keys"]
@@ -241,12 +243,15 @@ def _split_restaurant_analysis(
                 dict.fromkeys(entry["summary"] for entry in entries if entry["summary"])
             )
             recommended_action = analysis.recommendedAction
+            topic_key = topic_keys[0] if topic_keys else None
+            server_memo_id = _build_comparison_server_memo_id(topic_key, bucket["source_keys"])
 
         groups.append(
             MemoGroup(
                 memberClientIds=member_ids,
                 analysis=analysis.model_copy(
                     update={
+                        "serverMemoId": server_memo_id,
                         "title": str(title)[:40],
                         "summary": str(summary),
                         "recommendedAction": recommended_action,
@@ -260,6 +265,30 @@ def _split_restaurant_analysis(
 
 def _normalize_topic_key(value: str) -> str:
     return " ".join(value.casefold().split()).strip()
+
+
+def _build_restaurant_server_memo_id(details: dict, title: str) -> str | None:
+    restaurant = details.get("restaurant")
+    if not isinstance(restaurant, dict):
+        return None
+    place_id = restaurant.get("mapProviderPlaceId")
+    if isinstance(place_id, str) and place_id.strip():
+        return f"kakao:{place_id.strip()}"
+    name = restaurant.get("name") or title
+    address = restaurant.get("address") or restaurant.get("roadAddress")
+    cleaned_name = _normalize_topic_key(name) if isinstance(name, str) else None
+    cleaned_address = _normalize_topic_key(address) if isinstance(address, str) else None
+    if cleaned_name and cleaned_address:
+        return f"restaurant:{cleaned_name}:{cleaned_address}"
+    return None
+
+
+def _build_comparison_server_memo_id(topic_key: str | None, source_keys: list[str]) -> str | None:
+    if topic_key:
+        return f"comparison:{topic_key}"
+    if source_keys:
+        return f"comparison:{_normalize_topic_key(source_keys[0])}"
+    return None
 
 
 def _combine_comparison_details(entries: list[dict]) -> dict:

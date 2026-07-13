@@ -39,6 +39,8 @@ class Settings:
     jwt_audience: str
     jwt_access_ttl_seconds: int
     jwt_refresh_ttl_seconds: int
+    ocr_warmup_on_startup: bool
+    paddle_cpu_threads: int
 
 
 def load_settings() -> Settings:
@@ -68,6 +70,8 @@ def load_settings() -> Settings:
         jwt_audience=os.getenv("JWT_AUDIENCE", "capturemate-android"),
         jwt_access_ttl_seconds=int(os.getenv("JWT_ACCESS_TTL_SECONDS", "1800")),
         jwt_refresh_ttl_seconds=int(os.getenv("JWT_REFRESH_TTL_SECONDS", "259200")),
+        ocr_warmup_on_startup=os.getenv("OCR_WARMUP_ON_STARTUP", "true").lower() == "true",
+        paddle_cpu_threads=int(os.getenv("PADDLE_CPU_THREADS", "2")),
     )
 
 

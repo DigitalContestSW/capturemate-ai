@@ -48,41 +48,62 @@ class AnalysisService:
     def analyze(self, masked_text: str, locale: str) -> AnalyzeResponse:
         text = masked_text.strip()
         if not text:
+            logger.debug("빈 텍스트 -> empty 응답(분석 건너뜀)")
             return _empty_response()
 
         base = self._classify(text, locale)               # 1단계 (분류 + 유용성)
         # 유용하지 않으면 2단계(세부 추출)를 건너뛴다 — 잡담/밈 등에 LLM 낭비 방지.
-        details = self._extract_details(text, locale, base) if base.isUseful else None
+        if base.isUseful:
+            details = self._extract_details(text, locale, base)
+        else:
+            logger.debug("isUseful=false -> 2단계(세부추출) 건너뜀")
+            details = None
         return _to_response(base, details)
 
     # ── 1단계: 분류 + 기본 설명 ──────────────────────────────────────────────
     def _classify(self, text: str, locale: str) -> LlmAnalysis:
         if self._client is None:
+            logger.info("1단계: LLM 미사용 -> 키워드 폴백 분류")
             return fallback_analysis(text)
 
+        logger.info("1단계(분류) 시작: chars=%d", len(text))
+        started = time.perf_counter()
         data = self._generate_json(build_classify_prompt(text, locale, _today()))
+        elapsed = (time.perf_counter() - started) * 1000
         if data is None:
+            logger.warning("1단계 실패 -> 키워드 폴백 사용 (%.0fms)", elapsed)
             return fallback_analysis(text)
         try:
-            return LlmAnalysis.model_validate(data)
+            result = LlmAnalysis.model_validate(data)
         except ValidationError:
+            logger.warning("1단계 검증 실패 -> 키워드 폴백 사용 (%.0fms)", elapsed)
             return fallback_analysis(text)
+        logger.info(
+            "1단계 완료: category=%s isUseful=%s (%.0fms)", result.category, result.isUseful, elapsed
+        )
+        return result
 
     # ── 2단계: 카테고리 전용 세부 추출 (선택) ────────────────────────────────
     def _extract_details(self, text: str, locale: str, base: LlmAnalysis) -> dict | None:
         stage2 = CATEGORY_STAGE2.get(base.category)
         if stage2 is None or self._client is None:
+            logger.debug("2단계 없음(카테고리=%s 미등록 또는 LLM 미사용) -> 건너뜀", base.category)
             return None  # 미등록 카테고리이거나 LLM 미사용 -> 2단계 건너뜀
 
+        logger.info("2단계(세부추출) 시작: category=%s", base.category)
+        started = time.perf_counter()
         prompt = stage2.build_prompt(text, base, locale, _today())
         data = self._generate_json(prompt)
+        elapsed = (time.perf_counter() - started) * 1000
         if data is None:
+            logger.warning("2단계 실패(응답 없음) category=%s -> details 생략 (%.0fms)", base.category, elapsed)
             return None
         try:
             details = stage2.details_model.model_validate(data).model_dump()
         except ValidationError:
-            logger.warning("stage-2 details validation failed for category=%s", base.category)
+            logger.warning("2단계 검증 실패 category=%s -> details 생략 (%.0fms)", base.category, elapsed)
             return None
+        logger.info("2단계 완료: category=%s (%.0fms)", base.category, elapsed)
         return self._enrich_details(base.category, details)
 
     # ── 공통: JSON 응답 생성(재시도 포함) ───────────────────────────────────
@@ -90,31 +111,56 @@ class AnalysisService:
         if category != "restaurant" or not self._config.kakao_rest_api_key:
             return details
 
+        logger.info("카카오 로컬 보강 시작: category=%s", category)
+        started = time.perf_counter()
         client = KakaoLocalClient(
             rest_api_key=self._config.kakao_rest_api_key,
             timeout_seconds=self._config.kakao_timeout_seconds,
         )
-        return enrich_restaurant_details_with_kakao(details, client)
+        restaurants = details.get("restaurants")
+        if isinstance(restaurants, list):
+            details["restaurants"] = [
+                enrich_restaurant_details_with_kakao(item, client)
+                if isinstance(item, dict)
+                else item
+                for item in restaurants
+            ]
+            enriched = details
+        else:
+            enriched = enrich_restaurant_details_with_kakao(details, client)
+        logger.info("카카오 로컬 보강 완료 (%.0fms)", (time.perf_counter() - started) * 1000)
+        return enriched
 
     def _generate_json(self, prompt: str) -> dict | None:
         assert self._client is not None
         attempts = self._config.llm_max_retries + 1
 
         for attempt in range(1, attempts + 1):
+            call_started = time.perf_counter()
             try:
                 raw = self._client.generate(prompt)
-                return _parse_json(raw)
-            except (LlmError, ValueError) as exc:
-                # 오류의 '종류'만 로깅 — 프롬프트나 모델 출력은 절대 남기지 않는다.
-                logger.warning(
-                    "LLM call attempt %d/%d failed: %s",
+                parsed = _parse_json(raw)
+                logger.debug(
+                    "LLM 호출 성공 attempt=%d/%d (%.0fms)",
                     attempt,
                     attempts,
-                    type(exc).__name__,
+                    (time.perf_counter() - call_started) * 1000,
+                )
+                return parsed
+            except (LlmError, ValueError) as exc:
+                # 메시지는 우리가 만든 안전한 문자열(상태코드/예외클래스명)뿐 — 프롬프트/출력 미포함.
+                # 그래야 429(쿼터)·503(서버)·JSON파싱실패를 로그에서 바로 구분한다.
+                logger.warning(
+                    "LLM call attempt %d/%d failed: %s (%.0fms)",
+                    attempt,
+                    attempts,
+                    exc,
+                    (time.perf_counter() - call_started) * 1000,
                 )
                 if attempt < attempts:
                     time.sleep(min(2 ** (attempt - 1), 4))  # 1초, 2초, 최대 4초로 제한
 
+        logger.warning("LLM 호출 최종 실패: %d회 시도 모두 실패", attempts)
         return None
 
 
@@ -198,7 +244,9 @@ def _restore_value(value, mapping: dict[str, str]):
     if isinstance(value, str):
         return restore_text(value, mapping)
     if isinstance(value, list):
-        return [restore_text(v, mapping) if isinstance(v, str) else v for v in value]
+        return [_restore_value(v, mapping) for v in value]
+    if isinstance(value, dict):
+        return {key: _restore_value(item, mapping) for key, item in value.items()}
     return value
 
 

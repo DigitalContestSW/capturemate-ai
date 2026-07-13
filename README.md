@@ -30,7 +30,7 @@ CaptureMate AI는 CaptureMate Android 앱을 위한 FastAPI 기반 백엔드 서
 
 ```text
 app/
-├─ main.py              # FastAPI 엔드포인트 (/health, /v1/auth/*, /v1/analyze)
+├─ main.py              # FastAPI 엔드포인트 (/health/*, /v1/auth/*, /v1/analyze)
 ├─ config.py            # .env 설정 로드
 ├─ models.py            # 요청/응답 DTO (Pydantic)
 ├─ auth.py              # Google ID token 검증 + JWT 발급/검증
@@ -82,7 +82,7 @@ python -m pip install -r requirements-ocr.txt      # 백엔드 OCR(PaddleOCR)
 ```
 
 `.env.example`을 복사해 `.env`를 만들고 `LLM_API_KEY`, `GOOGLE_WEB_CLIENT_ID`,
-`JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` 등을 채웁니다.
+`JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, OCR 운영 설정 등을 채웁니다.
 
 ## 실행
 
@@ -96,7 +96,14 @@ py -m uvicorn app.main:app --reload --port 8001
 ## API
 
 ### `GET /health`
-서버 상태 확인. 응답: `{ "status": "ok", "llmEnabled": true|false }`
+서버 상태 확인. 응답: `{ "status": "ok", "llmEnabled": true|false, "ocrReady": true|false }`
+
+### `GET /health/live`
+프로세스 생존 확인용 엔드포인트입니다. 로드밸런서 readiness가 아니라 liveness 확인에 사용합니다.
+
+### `GET /health/ready`
+트래픽 수신 준비 상태 확인용 엔드포인트입니다. PaddleOCR 모델 로딩이 끝나면 `200`, 아직 준비되지 않았거나
+로딩에 실패하면 `503`을 반환합니다. ECS health check에는 이 경로를 사용합니다.
 
 ### `POST /v1/auth/google` (application/json)
 Android Google 로그인에서 받은 Google ID token을 서버 JWT로 교환합니다.

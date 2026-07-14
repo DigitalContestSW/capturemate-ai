@@ -13,6 +13,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.analysis.batch import BatchAnalyzer
 from app.analysis.service import AnalysisService
 from app.auth import (
+    AuthenticatedUser,
     get_current_user,
     issue_access_token_from_refresh,
     issue_token_pair,
@@ -98,6 +99,8 @@ def _parse_metadata(metadata: str | None) -> list:
 
 
 def _require_user(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]):
+    if settings.auth_disabled:
+        return AuthenticatedUser(subject="local-dev-user")
     return get_current_user(credentials)
 
 

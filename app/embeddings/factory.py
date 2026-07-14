@@ -18,6 +18,18 @@ def build_embedding_client(config: Settings) -> EmbeddingClient | None:
             model=config.llm_embedding_model,
             timeout_seconds=config.llm_embedding_timeout_seconds,
         )
+    if provider == "openai":
+        from app.embeddings.openai_embedding import OpenAiEmbeddingClient
+
+        # LLM_EMBEDDING_MODEL이 Gemini 기본값 그대로면 OpenAI 기본 모델로 대체한다.
+        model = config.llm_embedding_model
+        if model == "text-embedding-004":
+            model = "text-embedding-3-small"
+        return OpenAiEmbeddingClient(
+            api_key=config.llm_api_key,
+            model=model,
+            timeout_seconds=config.llm_embedding_timeout_seconds,
+        )
 
     # 임베딩 미구현 공급자 -> None (그룹핑 없이 개별 처리)
     return None

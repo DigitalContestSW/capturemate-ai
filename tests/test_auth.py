@@ -14,6 +14,7 @@ TEST_SETTINGS = replace(
     google_web_client_id="google-web-client-id.apps.googleusercontent.com",
     jwt_access_secret="test-access-secret-with-enough-length",
     jwt_refresh_secret="test-refresh-secret-with-enough-length",
+    auth_disabled=False,
     jwt_access_ttl_seconds=1800,
     jwt_refresh_ttl_seconds=259200,
 )
@@ -57,6 +58,14 @@ class AuthApiTest(TestCase):
             self.assertTrue(refresh_body["accessToken"])
             self.assertIsNone(refresh_body["refreshToken"])
             self.assertEqual(refresh_body["accessExpiresIn"], 1800)
+
+    def test_auth_disabled_allows_local_dev_user_without_credentials(self) -> None:
+        disabled_settings = replace(TEST_SETTINGS, auth_disabled=True)
+
+        with patch.object(main, "settings", disabled_settings):
+            user = main._require_user(None)
+
+        self.assertEqual(user.subject, "local-dev-user")
 
     def test_analyze_requires_access_token_and_rejects_refresh_token(self) -> None:
         google_claims = {"sub": "google-subject-123"}

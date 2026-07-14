@@ -27,5 +27,7 @@ class RateLimiter:
             self._last = time.monotonic()
 
 
-# 임베딩·생성 모든 Gemini 호출에 공유 적용(집계 호출률을 제어).
-gemini_rate_limiter = RateLimiter(settings.llm_min_interval_seconds)
+# 생성·임베딩 등 모든 LLM 공급자 호출에 공유 적용(집계 호출률을 제어).
+llm_rate_limiter = RateLimiter(settings.llm_min_interval_seconds)
+# 하위 호환 별칭 — 기존 Gemini 클라이언트가 이 이름을 사용한다.
+gemini_rate_limiter = llm_rate_limiter

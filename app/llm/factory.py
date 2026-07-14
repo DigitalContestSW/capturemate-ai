@@ -23,5 +23,14 @@ def build_llm_client(config: Settings) -> LlmClient | None:
             model=config.llm_model,
             timeout_seconds=config.llm_timeout_seconds,
         )
+    if provider == "openai":
+        # 지연 import — openai SDK 미설치 환경(gemini 전용 배포)에서도 이 모듈이 로드되게 한다.
+        from app.llm.openai_client import OpenAiLlmClient
+
+        return OpenAiLlmClient(
+            api_key=config.llm_api_key,
+            model=config.llm_model,
+            timeout_seconds=config.llm_timeout_seconds,
+        )
 
     raise ValueError(f"Unsupported LLM provider: {config.llm_provider}")

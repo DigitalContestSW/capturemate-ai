@@ -2,7 +2,6 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -42,26 +41,17 @@ class KakaoLocalClient:
 
         # 최초 검색은 식당명만 사용한다. 잘못 추출된 주소가 검색을 오염시키는 것을 막는다.
         candidates = self._search_candidates(cleaned_name)
+        if len(candidates) == 1:
+            return candidates[0]
 
-        # 동명 지점이 여러 개일 때만 동네명을 추가하여 다시 검색한다.
+        # 동명 지점이 여러 개이거나 첫 검색이 비었을 때만 동네명을 추가하여 다시 검색한다.
         cleaned_neighborhood = _clean_string(neighborhood)
-        if len(candidates) > 1 and cleaned_neighborhood:
+        if cleaned_neighborhood and (not candidates or len(candidates) > 1):
             refined = self._search_candidates(f"{cleaned_name} {cleaned_neighborhood}")
-            if refined:
-                candidates = refined
+            if len(refined) == 1:
+                return refined[0]
 
-        if not candidates:
-            return None
-
-        return max(
-            candidates,
-            key=lambda place: _score_place(
-                place,
-                name=cleaned_name,
-                address=address,
-                neighborhood=cleaned_neighborhood,
-            ),
-        )
+        return None
 
     def _search_candidates(self, query: str) -> list[KakaoPlace]:
         candidates: list[KakaoPlace] = []
@@ -164,29 +154,6 @@ def _place_from_document(document: dict[str, Any]) -> KakaoPlace:
         latitude=_to_float(document.get("y")),
         category_name=_clean_string(document.get("category_name")),
     )
-
-
-def _score_place(
-    place: KakaoPlace,
-    name: str | None,
-    address: str | None,
-    neighborhood: str | None,
-) -> float:
-    score = 0.0
-    if name and place.name:
-        score += SequenceMatcher(None, name, place.name).ratio() * 0.6
-        if name in place.name or place.name in name:
-            score += 0.25
-    if address:
-        joined_address = " ".join(part for part in (place.address, place.road_address) if part)
-        if address in joined_address or joined_address in address:
-            score += 0.5
-    if neighborhood and neighborhood in " ".join(part for part in (place.address, place.road_address) if part):
-        score += 0.3
-    if place.latitude is not None and place.longitude is not None:
-        score += 0.1
-    return score
-
 
 def _extract_neighborhood(address: str | None) -> str | None:
     if not address:

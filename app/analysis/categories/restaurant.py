@@ -1,3 +1,4 @@
+import re
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -107,7 +108,9 @@ class RestaurantExtraction(BaseModel):
             self.confidence = min(self.confidence, 0.6)
 
         # LLM이 임의로 만든 id를 신뢰하지 않는다. 같은 동네는 항상 같은 그룹 id를 쓴다.
-        if restaurant.neighborhood:
+        neighborhood = _normalize_neighborhood(restaurant.neighborhood)
+        if neighborhood:
+            restaurant.neighborhood = neighborhood
             group_id = _slugify_korean_safe(f"{restaurant.neighborhood}-restaurant")
             self.group = RestaurantGroup(
                 id=group_id,
@@ -189,6 +192,7 @@ JSON 스키마:
 - 단일 가게 항목의 topicKey는 null로 두고 title과 summary에 다른 가게 정보를 섞지 마세요.
 - 한 SOURCE에 여러 가게의 메뉴·가격 비교가 있으면 비교 전체를 항목 하나로 만드세요.
 - 비교 항목은 title을 비교 주제 중심으로 쓰고 topicKey를 짧게 정규화하세요. 예: "수박주스 비교".
+- 동네명은 숫자를 제거한 기본형으로 정규화하세요. 예: "상도1동" -> "상도동".
 - 비교 항목의 restaurant.name, 주소, 좌표, group은 null로 두세요.
 - 비교 항목의 menus에는 "가게명 · 메뉴명" 형식으로 가게를 구분하여 모든 비교 메뉴를 넣으세요.
 - 여러 SOURCE가 같은 비교 주제를 이어서 다루면 하나의 비교 항목에 SOURCE들을 모두 포함하세요.
@@ -212,3 +216,10 @@ OCR 텍스트:
 def _slugify_korean_safe(value: str) -> str:
     normalized = value.strip().lower().replace(" ", "-")
     return "".join(ch for ch in normalized if ch.isalnum() or ch == "-") or "restaurant-group"
+
+
+def _normalize_neighborhood(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    normalized = re.sub(r"\d+(?=(동|가|읍|면|리)$)", "", value.strip())
+    return normalized or None

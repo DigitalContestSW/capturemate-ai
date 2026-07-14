@@ -35,7 +35,6 @@ class Settings:
     kakao_rest_api_key: str | None
     kakao_timeout_seconds: float
     google_web_client_id: str | None
-    auth_disabled: bool
     jwt_access_secret: str | None
     jwt_refresh_secret: str | None
     jwt_issuer: str
@@ -69,7 +68,6 @@ def load_settings() -> Settings:
         kakao_rest_api_key=os.getenv("KAKAO_REST_API_KEY"),
         kakao_timeout_seconds=float(os.getenv("KAKAO_TIMEOUT_SECONDS", "3")),
         google_web_client_id=os.getenv("GOOGLE_WEB_CLIENT_ID"),
-        auth_disabled=os.getenv("AUTH_DISABLED", "false").lower() == "true",
         jwt_access_secret=os.getenv("JWT_ACCESS_SECRET"),
         jwt_refresh_secret=os.getenv("JWT_REFRESH_SECRET"),
         jwt_issuer=os.getenv("JWT_ISSUER", "capturemate-api"),
